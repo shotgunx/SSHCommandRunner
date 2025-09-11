@@ -20,7 +20,12 @@ dependencies {
 
     implementation 'commons-io:commons-io:2.19.0'
     implementation 'org.bouncycastle:bcprov-jdk18on:1.81'
-
+    
+    // Logging dependencies
+    implementation 'org.slf4j:slf4j-api:2.0.9'
+    implementation 'org.slf4j:slf4j-simple:2.0.9'  // Simple logger for console output
+    // Or use Logback for more control:
+    // implementation 'ch.qos.logback:logback-classic:1.4.11'
 
 }
 
