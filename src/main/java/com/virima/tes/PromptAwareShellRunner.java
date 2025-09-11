@@ -1,6 +1,6 @@
 package com.virima.tes;
 
-import com.virima.smartRunner.CommandResult;
+import com.virima.sshd.CommandResult;
 import com.virima.utils.SshSanitizer;
 import org.apache.sshd.client.channel.ClientChannelEvent;
 import org.apache.sshd.client.channel.ChannelShell;
@@ -74,7 +74,7 @@ public final class PromptAwareShellRunner {
       // Final polish in case any line-overwrite artifacts snuck in
       String cleaned = TerminalSanitizer.clean(output);
 
-      return new CommandResult(cleaned, "", true, "shell",0);
+      return new CommandResult( true, 0,cleaned);
     }
   }
 
