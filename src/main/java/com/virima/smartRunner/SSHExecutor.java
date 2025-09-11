@@ -304,8 +304,8 @@ public class SSHExecutor {
             Integer exitStatus = channelExec.getExitStatus();
             long executionTime = System.currentTimeMillis() - startTime;
             
-            String output = out.toString(StandardCharsets.UTF_8);
-            String error = err.toString(StandardCharsets.UTF_8);
+            String output = out.toString("UTF-8");
+            String error = err.toString("UTF-8");
             
             boolean success = exitStatus != null && exitStatus == 0;
             
@@ -363,7 +363,7 @@ public class SSHExecutor {
             long executionTime = System.currentTimeMillis() - startTime;
             
             // Get error output if any
-            String error = cleanErr.toString(StandardCharsets.UTF_8);
+            String error = cleanErr.toString("UTF-8");
             
             // Additional cleaning with TerminalSanitizer for any remaining artifacts
             commandOutput = TerminalSanitizer.clean(commandOutput);
@@ -429,7 +429,7 @@ public class SSHExecutor {
         // Wait a bit for the prompt to appear
         Thread.sleep(500);
         
-        String output = out.toString(StandardCharsets.UTF_8);
+        String output = out.toString("UTF-8");
         String[] lines = output.split("\n");
         
         // The last non-empty line should be the prompt
@@ -462,7 +462,7 @@ public class SSHExecutor {
         while (System.currentTimeMillis() - startWait < maxWait) {
             Thread.sleep(100); // Small delay to allow output to accumulate
             
-            String currentOutput = out.toString(StandardCharsets.UTF_8);
+            String currentOutput = out.toString("UTF-8");
             output.setLength(0);
             output.append(currentOutput);
             

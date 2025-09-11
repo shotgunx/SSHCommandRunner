@@ -53,7 +53,7 @@ public final class TerminalSanitizer {
     s = ttyCook(s);
     // normalize newlines, trim crazy leading blank screens
     s = s.replace("\r\n", "\n").replace("\r", "\n");
-    s = s.replaceAll("\n{3,}", "\n\n").strip();
+    s = s.replaceAll("\n{3,}", "\n\n").trim();
     return s;
   }
 }
