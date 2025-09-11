@@ -12,7 +12,6 @@ repositories {
 
 dependencies {
     implementation 'org.apache.sshd:sshd-core:2.15.0'
-    implementation("com.github.mwiede:jsch:0.2.20")
 
     implementation 'commons-io:commons-io:2.19.0'
     implementation 'org.bouncycastle:bcprov-jdk18on:1.81'
