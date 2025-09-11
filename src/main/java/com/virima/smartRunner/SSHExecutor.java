@@ -28,7 +28,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import static com.virima.old.SSHExecutor.detectPromptSmartly;
+import static com.virima.utils.ParseUtils.detectPromptSmartly;
 
 /**
  * SSH Command Runner that executes commands using both exec and shell channels

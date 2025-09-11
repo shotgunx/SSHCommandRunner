@@ -5,8 +5,7 @@
 
 package com.virima.smartRunner;
 
-import com.jcraft.jsch.Session;
-import org.apache.sshd.client.session.ClientSession;
+
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
 import java.io.BufferedReader;
