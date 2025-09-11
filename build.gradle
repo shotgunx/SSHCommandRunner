@@ -31,8 +31,16 @@ test {
 
 jar {
     manifest {
-//        attributes(
-//                'Main-Class': 'com.virima.'
-//        )
+        attributes(
+                'Main-Class': 'com.virima.SSHTest'
+        )
+    }
+}
+
+shadowJar {
+    manifest {
+        attributes(
+                'Main-Class': 'com.virima.SSHTest'
+        )
     }
 }
