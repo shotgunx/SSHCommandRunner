@@ -1,9 +1,5 @@
-//
-// Source code recreated from a .class file by IntelliJ IDEA
-// (powered by FernFlower decompiler)
-//
 
-package com.virima.old;
+package com.virima;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -339,7 +335,7 @@ public class SSHExecutor implements Callable<ClientSession> {
         return var1;
     }
 
-    public static String detectPromptSmartly(ByteArrayOutputStream output) {
+    private static String detectPromptSmartly(ByteArrayOutputStream output) {
         try {
             String previousOutput = "";
             String currentOutput = "";

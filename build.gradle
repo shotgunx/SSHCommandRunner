@@ -9,21 +9,25 @@ version = '1.0'
 repositories {
     mavenCentral()
 }
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(8)
+    }
+}
 
 dependencies {
     implementation 'org.apache.sshd:sshd-core:2.15.0'
 
     implementation 'commons-io:commons-io:2.19.0'
     implementation 'org.bouncycastle:bcprov-jdk18on:1.81'
-    
-    compileOnly 'org.projectlombok:lombok:1.18.30'
-    annotationProcessor 'org.projectlombok:lombok:1.18.30'
+
 
 }
 
 test {
     useJUnitPlatform()
 }
+
 
 jar {
     manifest {
