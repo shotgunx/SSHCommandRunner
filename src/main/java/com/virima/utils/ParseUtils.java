@@ -1,31 +1,57 @@
 package com.virima.utils;
 
+import com.virima.smartRunner.UserCredential;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.ByteArrayOutputStream;
+import java.io.PipedOutputStream;
+import java.nio.charset.StandardCharsets;
 
 public class ParseUtils {
-    public static String detectPromptSmartly(ByteArrayOutputStream output) {
+    private static final Logger logger = LoggerFactory.getLogger(ParseUtils.class);
+
+    public static String detectPromptSmartly(ByteArrayOutputStream output, PipedOutputStream pipedIn, UserCredential userCredential, boolean allow) {
         try {
             String previousOutput = "";
             String currentOutput = "";
             int stableCount = 0;
             int maxWaitTime = 90000;
-            int waitInterval = 500;
+            int waitInterval = 5000;
 
-            for(int waited = 0; waited < maxWaitTime; waited += waitInterval) {
-                Thread.sleep((long)waitInterval);
-                currentOutput = output.toString("UTF-8");
-                if (currentOutput.equals(previousOutput)) {
-                    ++stableCount;
-                    if (stableCount >= 3) {
-                        break;
+            boolean firstDone=false;
+            while(true) {
+                for (int waited = 0; waited < maxWaitTime; waited += waitInterval) {
+                    Thread.sleep((long) waitInterval);
+                    currentOutput = output.toString("UTF-8");
+                    System.out.println(currentOutput);
+                    if (currentOutput.equals(previousOutput)) {
+                        ++stableCount;
+                        if (stableCount >= 3&&firstDone) {
+                            break;
+                        }else if(stableCount >= 3&&!firstDone){
+                            pipedIn.write("\n".getBytes(StandardCharsets.UTF_8));
+                            pipedIn.flush();
+                            stableCount=0;
+                            firstDone=true;
+                            try{Thread.sleep(1000);} catch (Exception e) {
+
+                            }
+                        }
+                    } else {
+                        stableCount = 0;
                     }
-                } else {
-                    stableCount = 0;
+
+                    previousOutput = currentOutput;
                 }
 
-                previousOutput = currentOutput;
-            }
+                logger.info("[DETECT-PROMPT-SMARTLY] stable output: '{}'", previousOutput);
 
+                boolean handledLogin=InteractivePromptHandler.handleLoginPrompt(currentOutput,pipedIn,userCredential,allow);
+                if(!handledLogin)
+                    break;
+
+            }
             String[] lines = currentOutput.split("\\r?\\n");
             String detectedPrompt = "";
             String[] commonPrompts = new String[]{"\\$\\s*$", "#\\s*$", ">\\s*$", ":\\s*$", "\\]\\s*$", "\\)\\s*$"};

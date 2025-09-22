@@ -38,7 +38,7 @@ public class SSHExecutor {
     private static final Logger logger = LoggerFactory.getLogger(SSHExecutor.class);
     private final UserCredential userCredential;
     private final ExecutorService executorService;
-    private final long commandTimeoutSeconds=10;
+    private final long commandTimeoutSeconds=35;
     
     public SSHExecutor(UserCredential userCredential) {
         this.userCredential = userCredential;
@@ -63,7 +63,8 @@ public class SSHExecutor {
         logger.debug("SSH client created, configuring properties...");
 
         client.getProperties().put("StrictHostKeyChecking", "no");
-        client.getProperties().put("PreferredAuthentications", "diffie-hellman-group-exchange-sha256,publickey,keyboard-interactive,password");
+        // Fixed: Removed diffie-hellman-group-exchange-sha256 (key exchange algorithm) from authentication methods
+        client.getProperties().put("PreferredAuthentications", "publickey,keyboard-interactive,password");
         client.getProperties().put("PubkeyAcceptedAlgorithms", "ssh-ed25519,ssh-rsa,ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521,rsa-sha2-256,rsa-sha2-512");
         client.setKeyExchangeFactories(NamedFactory.setUpTransformedFactories(true, BuiltinDHFactories.VALUES, ClientBuilder.DH2KEX));
         
@@ -196,7 +197,7 @@ public class SSHExecutor {
                     return new CommandResult(null, "Failed to create session", false, "shell", 0);
                 }
                 logger.debug("[SHELL] Session created successfully, executing command...");
-                CommandResult result = newExecuteCommand(session, command, false);
+                CommandResult result = newExecuteCommand(session, command, false,userCredential);
                 long shellTime = System.currentTimeMillis() - shellStartTime;
                 logger.info("[SHELL] Execution completed in {} ms, success: {}", shellTime, result.isSuccess());
                 return result;
@@ -256,7 +257,7 @@ public class SSHExecutor {
         CommandResult shellResult = null;
         try {
             logger.debug("[SEQUENTIAL] Executing command via shell channel...");
-            shellResult = newExecuteCommand(shellSession, command, false);
+            shellResult = newExecuteCommand(shellSession, command, false,userCredential);
             long shellTime = System.currentTimeMillis() - shellStartTime;
             logger.info("[SEQUENTIAL] Shell channel completed in {} ms, success: {}", 
                        shellTime, shellResult != null ? shellResult.isSuccess() : false);
@@ -522,7 +523,7 @@ public class SSHExecutor {
     }
 
 
-    public static CommandResult newExecuteCommand(ClientSession clientSession, String script, boolean isAdmin) {
+    public static CommandResult newExecuteCommand(ClientSession clientSession, String script, boolean isAdmin,UserCredential userCredential) {
         long startTime = System.currentTimeMillis();
         logger.info("[NEW-EXECUTE] Starting command execution");
         logger.debug("[NEW-EXECUTE] Command: {}", script);
@@ -542,9 +543,9 @@ public class SSHExecutor {
             shell.open().verify(5L, TimeUnit.SECONDS);
             logger.debug("[NEW-EXECUTE] Shell channel opened, detecting prompt...");
             
-            String prompt = detectPromptSmartly(output);
+            String prompt = detectPromptSmartly(output,pipedIn,userCredential,true);
             logger.info("[NEW-EXECUTE] Detected prompt: '{}'", prompt);
-            
+
             output.reset();
             String command = script + "\nexit\n";
             logger.debug("[NEW-EXECUTE] Sending command with exit appended...");
@@ -556,7 +557,9 @@ public class SSHExecutor {
             
             result = output.toString("UTF-8").trim();
             logger.debug("[NEW-EXECUTE] Raw output length: {} characters", result.length());
-            
+
+            logger.debug("[NEW-EXECUTE] Raw output : {} ", result);
+
             result = prompt + result;
             if (!prompt.isEmpty() && result.contains(prompt)) {
                 result = result.substring(0, result.lastIndexOf(prompt));
