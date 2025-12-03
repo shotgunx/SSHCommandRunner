@@ -14,18 +14,20 @@ public class SSHCommandRunner implements Callable<CommandResult> {
     Session session;
     String command;
     boolean isAdmin;
+    private String password;
 
-    public SSHCommandRunner(Session session, String command, boolean isAdmin) {
+    public SSHCommandRunner(Session session, String command, boolean isAdmin, String password) {
         this.session = session;
         this.command = command;
         this.isAdmin = isAdmin;
+        this.password = password;
     }
 
-    public static CommandResult executeCommand(Session session, String command, boolean isAdmin, int sshExecutionTimeInSeconds) {
+    public static CommandResult executeCommand(Session session, String command, boolean isAdmin,String password, int sshExecutionTimeInSeconds) {
         CommandResult commandResult = new CommandResult(false, -1, "");
         long startTime = System.currentTimeMillis();
         System.out.println("SSHCommandRunnerExecuting shell script on host " + session.getHost()+ " with a timeout of " + sshExecutionTimeInSeconds + " secs");
-        SSHCommandRunner sshCommandRunner = new SSHCommandRunner(session, command, isAdmin);
+        SSHCommandRunner sshCommandRunner = new SSHCommandRunner(session, command, isAdmin, password);
         ExecutorService service = Executors.newSingleThreadExecutor();
 
         CommandResult var111;
@@ -52,7 +54,7 @@ public class SSHCommandRunner implements Callable<CommandResult> {
         CommandResult commandResult = null;
 
         try {
-            commandResult = SSHExecutor.newExecuteCommand(this.session, this.command, this.isAdmin);
+            commandResult = SSHExecutor.newExecuteCommand(this.session, this.command, this.isAdmin,this.password);
             return commandResult;
         } catch (Throwable e) {
             throw new RuntimeException(e);

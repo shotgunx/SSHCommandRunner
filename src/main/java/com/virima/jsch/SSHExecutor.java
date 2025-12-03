@@ -9,14 +9,22 @@ import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
 import com.jcraft.jsch.Session;
 import com.jcraft.jsch.UserInfo;
-import com.virima.utils.AnsiStrippingInputStream;
+import net.sf.expectit.Expect;
+import net.sf.expectit.ExpectBuilder;
+import net.sf.expectit.Result;
 import org.apache.commons.io.FileUtils;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 import java.util.UUID;
-import java.util.concurrent.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
+
+import static net.sf.expectit.filter.Filters.removeColors;
+import static net.sf.expectit.filter.Filters.removeNonPrintable;
+import static net.sf.expectit.matcher.Matchers.*;
 
 public class SSHExecutor implements Callable<Session> {
     private static final String CLASSNAME = "SSHExecutor";
@@ -26,6 +34,14 @@ public class SSHExecutor implements Callable<Session> {
     String privateKey;
     String passphrase;
     int port;
+
+    // Regex pattern to match common shell prompts:
+    // - username@host:path$ (Linux)
+    // - username@host:path# (root)
+    // - [user@host ~]$ (CentOS/RHEL)
+    // - hostname> or hostname# (network devices)
+    // - PS C:\> (PowerShell)
+    static final String PROMPT_REGEX = ".*[#>$%]\\s*$";
 
     public SSHExecutor(String var1, String var2, String var3, String var4, String var5, int var6) {
         this.host = var1;
@@ -149,288 +165,298 @@ public class SSHExecutor implements Callable<Session> {
     }
 
 
-    public static CommandResult newExecuteCommand(Session session, String command, boolean isAdmin) {
+    /**
+     * Executes a command on the SSH session using ExpectIt library for reliable prompt detection.
+     * 
+     * Flow:
+     * ┌─────────────────────────────────────────────────────────────┐
+     * │  1. Open Shell Channel                                      │
+     * │         ↓                                                   │
+     * │  2. Create ExpectIt instance with filters                   │
+     * │     (removes ANSI colors & non-printable chars)             │
+     * │         ↓                                                   │
+     * │  3. Wait for initial prompt (detect prompt pattern)         │
+     * │         ↓                                                   │
+     * │  4. Send command                                            │
+     * │         ↓                                                   │
+     * │  5. Wait for prompt again (captures command output)         │
+     * │         ↓                                                   │
+     * │  6. Extract & clean output                                  │
+     * │         ↓                                                   │
+     * │  7. Send exit & cleanup                                     │
+     * └─────────────────────────────────────────────────────────────┘
+     */
+    public static CommandResult newExecuteCommand(Session session, String command, boolean isAdmin,String password) {
         com.jcraft.jsch.ChannelShell channel = null;
+        Expect expect = null;
         String outputString = "";
-        CommandResult result=null;
-        int exitcode=-1;
+        int exitcode = -1;
+        
+
+        
         try {
-
-
             channel = (com.jcraft.jsch.ChannelShell) session.openChannel("shell");
-
-            // Set terminal type to reduce ANSI sequences
-            //channel.setPtyType("dumb", 80, 24, 640, 480);
-            if(isAdmin) {
-                channel.setPtyType("vt100", 80, 24, 640, 480);
-
+            
+            // Set terminal type based on admin mode
+            if (isAdmin) {
+                channel.setPtyType("vt100", 200, 24, 640, 480);
                 channel.setPty(true);
+            } else {
+                // Use dumb terminal to minimize escape sequences
+                channel.setPtyType("dumb", 200, 24, 640, 480);
             }
-
-            InputStream in = channel.getInputStream();
-            OutputStream out = channel.getOutputStream();
-
+            
             channel.connect(15000);
-
-            // You can also try sending terminal configuration commands
-            // For Cisco devices:
-            //out.write("terminal length 0\n".getBytes()); // Disable paging
-            //out.write("terminal datadump\n".getBytes());
-            out.write("terminal width 512\n".getBytes()); // Set wide terminal
-            out.flush();
-            Thread.sleep(1000);
-
-            // Clear output
-            while (in.available() > 0) {
-                in.read();
-            }
-
-            // Now detect prompt
-            String prompt = detectPrompt(in, out);
-            System.out.println("Detected prompt: '" + prompt + "'");
-
-            // Execute commands
-
-            out.write((command + "\n").getBytes());
-            out.flush();
-
-            String output = readUntilPrompt(in, out, prompt, 10000);
-            System.out.printf(output);
-            outputString = cleanOutput(output, command, prompt);
+            
+            // Build ExpectIt instance with filters to clean output
+            expect = new ExpectBuilder()
+                    .withOutput(channel.getOutputStream())
+                    .withInputs(channel.getInputStream())
+                    .withTimeout(60, TimeUnit.SECONDS)        // Default timeout for expect operations
+                    .withInputFilters(removeColors(), removeNonPrintable())  // Strip ANSI codes
+                    .build();
 
 
-            out.write("exit\n".getBytes());
-            out.flush();
-            exitcode=channel.getExitStatus();
+            // Step 4: Handle login sequence (username/password if asked again)
+            handleLogin(expect,session.getUserName(), password);
 
-        } catch (Exception e) {
-            e.printStackTrace();
-            outputString = e.getMessage();
-        } finally {
-            if (channel != null) channel.disconnect();
-        }
+            String detectedPrompt = detectPrompt(expect);
+            System.out.println("Detected prompt: '" + detectedPrompt + "'");
+            
+            // Build a regex pattern that matches this specific prompt (escape special regex chars)
+            String escapedPrompt = Pattern.quote(detectedPrompt);
 
-        return new CommandResult(true,exitcode,outputString);
-    }
 
-    public Session call() throws Exception {
-        Session var1 = getSshSession2(this.host, this.userName, this.password, this.privateKey, this.passphrase, this.port);
-        return var1;
-    }
+            drainBuffer(expect,100);
 
-    private static String detectPromptSmartly(ByteArrayOutputStream output) {
-        try {
-            String previousOutput = "";
-            String currentOutput = "";
-            int stableCount = 0;
-            int maxWaitTime = 90000;
-            int waitInterval = 500;
+            StringBuilder output = new StringBuilder();
+            expect.sendLine(command);
 
-            for(int waited = 0; waited < maxWaitTime; waited += waitInterval) {
-                Thread.sleep((long)waitInterval);
-                currentOutput = output.toString("UTF-8");
-                if (currentOutput.equals(previousOutput)) {
-                    ++stableCount;
-                    if (stableCount >= 3) {
-                        break;
-                    }
+            while (true) {
+                Result result = expect.expect(
+                        5*1000L,
+                        anyOf(
+                                regexp("(?im)--\\s*more\\s*--"),
+                                regexp("(?im)<---\\s*more\\s*--->"),
+                                regexp("(?im)^.*More:.*<space>.*Quit:.*q.*CTRL.*$"),
+                                regexp("(?m).*" + escapedPrompt + "\\s*$")
+                        )
+                );
+
+                if(result.isSuccessful())
+                    output.append(result.getBefore().stripLeading());
+                else
+                    break;
+
+                if (result.getInput().toLowerCase().contains("more")) {
+                    expect.send(" ");  // Space to continue
                 } else {
-                    stableCount = 0;
-                }
-
-                previousOutput = currentOutput;
-            }
-
-            String[] lines = currentOutput.split("\\r?\\n");
-            String detectedPrompt = "";
-            String[] commonPrompts = new String[]{"\\$\\s*$", "#\\s*$", ">\\s*$", ":\\s*$", "\\]\\s*$", "\\)\\s*$"};
-
-            for(int i = lines.length - 1; i >= 0; --i) {
-                String line = lines[i].trim();
-                if (!line.isEmpty()) {
-                    for(String pattern : commonPrompts) {
-                        if (line.matches(".*" + pattern)) {
-                            return line;
-                        }
-                    }
-                }
-            }
-
-            for(int i = lines.length - 1; i >= 0; --i) {
-                String line = lines[i].trim();
-                if (!line.isEmpty() && isLikelyPrompt(line)) {
-                    return line;
-                }
-            }
-
-            for(int i = lines.length - 1; i >= 0; --i) {
-                String line = lines[i].trim();
-                if (!line.isEmpty()) {
-                    return line;
-                }
-            }
-
-            return "";
-        } catch (Exception var15) {
-            String output_str = output.toString();
-            String[] lines = output_str.split("\\r?\\n");
-
-            for(int i = lines.length - 1; i >= 0; --i) {
-                if (!lines[i].trim().isEmpty()) {
-                    return lines[i].trim();
-                }
-            }
-
-            return "";
-        }
-    }
-
-    private static boolean isLikelyPrompt(String line) {
-        if (line.length() > 200) {
-            return false;
-        } else if (line.matches("^[^a-zA-Z0-9]*$") && line.length() > 10) {
-            return false;
-        } else {
-            boolean hasUser = line.contains("@") || line.matches(".*[a-zA-Z0-9]+.*");
-            boolean hasPath = line.contains("/") || line.contains("\\") || line.contains("~");
-            boolean hasPromptChar = line.matches(".*[#$>:]\\s*$");
-            boolean hasHostname = line.matches(".*[a-zA-Z0-9-]+@[a-zA-Z0-9-]+.*");
-            int score = 0;
-            if (hasUser) {
-                score += 2;
-            }
-
-            if (hasPath) {
-                score += 2;
-            }
-
-            if (hasPromptChar) {
-                score += 3;
-            }
-
-            if (hasHostname) {
-                score += 2;
-            }
-
-            if (line.length() < 100) {
-                ++score;
-            }
-
-            if (line.matches(".*\\[[a-zA-Z0-9@/~\\-\\s]+\\].*")) {
-                score += 2;
-            }
-
-            return score >= 3;
-        }
-    }
-
-    // Helper method to detect the shell prompt
-    private static String detectPrompt(InputStream in, OutputStream out) throws IOException, InterruptedException {
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        BufferedReader strippingInputStream=new BufferedReader(new InputStreamReader(new AnsiStrippingInputStream(in)));
-
-        byte[] tmp = new byte[1024];
-        
-        // Send a newline to get a fresh prompt
-        out.write("\n".getBytes());
-        out.flush();
-        
-        // Wait for output to stabilize
-        Thread.sleep(1000);
-        
-//        // Read available data
-//        while (strippingInputStream.available() > 0) {
-//            int i = strippingInputStream.read(tmp, 0, 1024);
-//            if (i < 0) break;
-//            buffer.write(tmp, 0, i);
-//        }
-
-        String lline,output="";
-        while ((lline = strippingInputStream.readLine()) != null) {
-            output+=lline;
-        }
-        
-        //String output = ;//buffer.toString("UTF-8");
-        String[] lines = output.split("\\r?\\n");
-        
-        // Find the last non-empty line which is likely the prompt
-        for (int i = lines.length - 1; i >= 0; i--) {
-            String line = lines[i].trim();
-            if (!line.isEmpty()) {
-                // Check if it looks like a prompt
-                if (line.matches(".*[#$>:]\\s*$") || isLikelyPrompt(line)) {
-                    return line;
-                }
-            }
-        }
-        
-        // Return the last non-empty line as fallback
-        for (int i = lines.length - 1; i >= 0; i--) {
-            if (!lines[i].trim().isEmpty()) {
-                return lines[i].trim();
-            }
-        }
-        
-        return "$"; // Default prompt
-    }
-    
-    // Helper method to read output until prompt is detected
-    private static String readUntilPrompt(InputStream in, OutputStream out, String prompt, int timeout) throws IOException, InterruptedException {
-        StringBuilder output = new StringBuilder();
-        byte[] tmp = new byte[1024];
-        long startTime = System.currentTimeMillis();
-        
-        while (System.currentTimeMillis() - startTime < timeout) {
-            if (in.available() > 0) {
-                int i = in.read(tmp, 0, 1024);
-                if (i < 0) break;
-                String chunk = new String(tmp, 0, i);
-                output.append(chunk);
-                
-                // Check if we've received the prompt
-                String currentOutput = output.toString();
-                if (currentOutput.contains(prompt) || currentOutput.endsWith(prompt)) {
                     break;
                 }
-            } else {
-                Thread.sleep(100);
+            }
+
+            outputString= cleanOutput(output.toString());
+
+
+
+            System.out.println("=== Command Output ===");
+            System.out.println(outputString);
+            System.out.println("======================");
+            
+            // Send exit command
+            expect.sendLine("exit");
+            
+            // Small delay to allow exit to process
+            Thread.sleep(500);
+            
+            exitcode = channel.getExitStatus();
+            
+        } catch (Exception e) {
+            e.printStackTrace();
+            outputString = "Error: " + e.getMessage();
+        } finally {
+            // Clean up resources
+            if (expect != null) {
+                try {
+                    expect.close();
+                } catch (IOException e) {
+                    // Ignore close errors
+                }
+            }
+            if (channel != null) {
+                channel.disconnect();
             }
         }
         
-        return output.toString();
+        return new CommandResult(true, exitcode, outputString);
     }
-    
-    // Helper method to clean command output
-    private static String cleanOutput(String output, String command, String prompt) {
+
+    // ==================== LOGIN HANDLING ====================
+
+    private static void handleLogin(Expect expect,String username, String password) throws IOException {
+        int maxAttempts = 1;
+
+        for (int i = 0; i < maxAttempts; i++) {
+            Result result = expect.withTimeout(5000L, TimeUnit.MILLISECONDS).expect(
+                    anyOf(
+                            regexp("(?i)(username|login|user)\\s*:\\s*$"),      // Username prompt
+                            regexp("(?i)password\\s*:\\s*$"),                    // Password prompt
+                            regexp("(?i)(authentication failed|access denied|login incorrect)"), // Failure
+                            regexp("[\\w\\-\\.@]+[#>$%]\\s*$")                  // Device prompt
+                    )
+            );
+
+            if (!result.isSuccessful()) {
+                // Timeout - send enter to trigger prompt
+                expect.sendLine("");
+                continue;
+            }
+
+            String matched = result.getInput().toLowerCase().trim();
+
+            // Auth failure
+            if (matched.contains("authentication failed") ||
+                    matched.contains("access denied") ||
+                    matched.contains("login incorrect")) {
+                throw new IOException("Authentication failed");
+            }
+
+            // Username prompt
+            if (matched.contains("username") || matched.contains("login") ||
+                    matched.matches(".*user\\s*:.*")) {
+                expect.sendLine(username);
+                continue;
+            }
+
+            // Password prompt
+            if (matched.contains("password")) {
+                expect.sendLine(password);
+                continue;
+            }
+
+            // Device prompt - login successful
+            if (matched.matches(".*[#>$%]\\s*$")) {
+                return;
+            }
+        }
+    }
+
+
+    /**
+     * Detects the shell prompt by waiting for output that matches common prompt patterns.
+     * 
+     * Strategy:
+     * ┌────────────────────────────────────────────────────────────┐
+     * │  1. Wait for initial prompt (login banner + prompt)        │
+     * │         ↓                                                  │
+     * │  2. Send empty line to get fresh prompt                    │
+     * │         ↓                                                  │
+     * │  3. Wait for prompt pattern again                          │
+     * │         ↓                                                  │
+     * │  4. Extract last line matching prompt pattern              │
+     * └────────────────────────────────────────────────────────────┘
+     */
+    private static String detectPrompt(Expect expect) throws IOException {
+        // Clear buffer
+        drainBuffer(expect,500);
+
+        // Send enter to get fresh prompt
+        expect.sendLine("");
+
+        try { Thread.sleep(1000); } catch (InterruptedException e) { }
+
+        // Collect response
+        StringBuilder response = new StringBuilder();
+        while (true) {
+            Result result = expect.withTimeout(500,TimeUnit.MILLISECONDS).expect( anyString());
+            if (result.isSuccessful()) {
+                response.append(result.getInput());
+            } else {
+                break;
+            }
+        }
+
+        // Extract prompt from last line
+        String[] lines = response.toString().split("\\r?\\n");
+        for (int i = lines.length - 1; i >= 0; i--) {
+            String line = lines[i].trim();
+            if (!line.isEmpty() && line.matches(".*[#>$%]\\s*$")) {
+                return line;
+
+            }
+        }
+
+        throw new IOException("Could not detect device prompt");
+    }
+    private static void drainBuffer(Expect expect, int timeoutMs) {
+        try {
+            while (expect.expect(timeoutMs, anyString()).isSuccessful()) {
+                // Drain
+            }
+        } catch (Exception e) {
+            // Ignore
+        }
+    }
+    /**
+     * Cleans the command output captured by ExpectIt.
+     * Removes command echo and any trailing whitespace.
+     */
+    private static String cleanExpectOutput(String output, String command, String prompt) {
         if (output == null || output.isEmpty()) {
             return "";
         }
         
-        // Remove the command echo if present
-        int commandIndex = output.indexOf(command);
-        if (commandIndex >= 0) {
-            int endOfCommand = commandIndex + command.length();
-            // Skip past the command and any trailing newline
-            while (endOfCommand < output.length() && 
-                   (output.charAt(endOfCommand) == '\r' || output.charAt(endOfCommand) == '\n')) {
-                endOfCommand++;
+        String[] lines = output.split("\\r?\\n");
+        StringBuilder cleaned = new StringBuilder();
+        boolean foundCommand = false;
+        
+        for (String line : lines) {
+            // Skip the echoed command line
+            if (!foundCommand && line.contains(command)) {
+                foundCommand = true;
+                continue;
             }
-            output = output.substring(endOfCommand);
+            
+            // Skip empty lines at the beginning
+            if (!foundCommand && line.trim().isEmpty()) {
+                continue;
+            }
+            
+            // Skip if line matches the prompt
+            if (prompt != null && line.trim().equals(prompt.trim())) {
+                continue;
+            }
+            
+            if (foundCommand) {
+                if (cleaned.length() > 0) {
+                    cleaned.append("\n");
+                }
+                cleaned.append(line);
+            }
         }
         
-        // Remove the trailing prompt if present
-        if (prompt != null && !prompt.isEmpty()) {
-            int lastPromptIndex = output.lastIndexOf(prompt);
-            if (lastPromptIndex >= 0) {
-                output = output.substring(0, lastPromptIndex);
-            }
+        return cleaned.toString().trim();
+    }
+
+
+    private static String cleanOutput(String output) {
+        if (output == null) return "";
+
+        // Remove command echo (first line)
+        int firstNewline = output.indexOf('\n');
+        if (firstNewline > 0) {
+            output = output.substring(firstNewline + 1);
         }
-        
-        // Remove ANSI escape sequences
-        output = output.replaceAll("\\x1B\\[[;\\d]*m", "");
-        output = output.replaceAll("\\x1B\\[\\d+[A-Z]", "");
-        
+
+        // Clean whitespace
+        output = output.replaceAll("\\r", "");
+        output = output.replaceAll("\\n{3,}", "\n\n");
+
         return output.trim();
+    }
+    public Session call() throws Exception {
+        Session var1 = getSshSession2(this.host, this.userName, this.password, this.privateKey, this.passphrase, this.port);
+        return var1;
     }
 
     public static class MyLogger implements com.jcraft.jsch.Logger {

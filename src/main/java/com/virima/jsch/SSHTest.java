@@ -52,7 +52,7 @@ public class SSHTest {
         var1.close();
         System.out.println("Getting output for host : " + var5 + " for command:- " + var8);
         Session var9 = SSHExecutor.getSshSessionForHost(var5, var6, var2, var3, var4, "22");
-        CommandResult var10 = SSHCommandRunner.executeCommand(var9, var8.toString(), false, 800);
+        CommandResult var10 = SSHCommandRunner.executeCommand(var9, var8.toString(), false,var2, 800);
         System.out.println("-----------------------------OUTPUT--------------------------------\n" + var10);
 
         try {
