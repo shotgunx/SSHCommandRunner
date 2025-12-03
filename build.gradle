@@ -30,7 +30,7 @@ test {
 jar {
     manifest {
         attributes(
-                'Main-Class': 'com.virima.smartRunner.SSHTest'
+                'Main-Class': 'com.virima.jsch.SSHTest'
         )
     }
 }
@@ -38,7 +38,7 @@ jar {
 shadowJar {
     manifest {
         attributes(
-                'Main-Class': 'com.virima.smartRunner.SSHTest'
+                'Main-Class': 'com.virima.jsch.SSHTest'
         )
     }
 }
