@@ -29,8 +29,8 @@ public class SSHTest {
         String port = var1.nextLine();
         System.out.println("Enter Channel (default: shell) : \n 1.Exec \n 2.Shell");
 
-        boolean execChannel = switch (Integer.parseInt(var1.nextLine())){
-            case 1-> true;
+        boolean execChannel = switch (var1.nextLine()){
+            case "1"-> true;
             default ->false;
         };
         System.out.println("please select any one authentication type \n 1.Basic authentication \n 2.Private Key authentication");

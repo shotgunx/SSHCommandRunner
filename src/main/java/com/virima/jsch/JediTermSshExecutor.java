@@ -29,7 +29,7 @@ import java.util.regex.Pattern;
 public class JediTermSshExecutor {
 
     // Set to true to enable debug output
-    private static final boolean DEBUG = true;
+    private static final boolean DEBUG = false;
 
     // Terminal dimensions - like setting your monitor resolution
     private static final int TERMINAL_WIDTH = 200;
