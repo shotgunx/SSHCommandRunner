@@ -8,11 +8,13 @@ version = '1.0'
 
 repositories {
     mavenCentral()
+    maven {
+        url = "https://packages.jetbrains.team/maven/p/ij/intellij-dependencies"
+    }
 }
 
 dependencies {
-    implementation("net.sf.expectit:expectit-core:0.9.0")
-
+    implementation("org.jetbrains.jediterm:jediterm-core:3.57")
     implementation("com.github.mwiede:jsch:2.27.7")
 
     implementation("commons-io:commons-io:2.21.0")

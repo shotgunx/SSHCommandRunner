@@ -25,6 +25,14 @@ public class SSHTest {
         String var5 = var1.nextLine();
         System.out.println("Enter Username : ");
         String var6 = var1.nextLine();
+        System.out.println("Enter Port (default: 22) : ");
+        String port = var1.nextLine();
+        System.out.println("Enter Channel (default: shell) : \n 1.Exec \n 2.Shell");
+
+        boolean execChannel = switch (Integer.parseInt(var1.nextLine())){
+            case 1-> true;
+            default ->false;
+        };
         System.out.println("please select any one authentication type \n 1.Basic authentication \n 2.Private Key authentication");
         String var7 = var1.nextLine();
         System.out.println("option:" + Integer.parseInt(var7));
@@ -50,9 +58,10 @@ public class SSHTest {
         String var8 = var1.nextLine();
         System.out.println("Command entered: " + var8);
         var1.close();
+        port=port.isBlank()?"22":port.trim();
         System.out.println("Getting output for host : " + var5 + " for command:- " + var8);
-        Session var9 = SSHExecutor.getSshSessionForHost(var5, var6, var2, var3, var4, "22");
-        CommandResult var10 = SSHCommandRunner.executeCommand(var9, var8.toString(), false,var2, 800);
+        Session var9 = SSHExecutor.getSshSessionForHost(var5, var6, var2, var3, var4, port);
+        CommandResult var10 = SSHCommandRunner.executeCommand(var9, var8.toString(),execChannel, false,var2, 800);
         System.out.println("-----------------------------OUTPUT--------------------------------\n" + var10);
 
         try {
