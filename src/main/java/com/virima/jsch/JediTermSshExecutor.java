@@ -29,14 +29,21 @@ import java.util.regex.Pattern;
 public class JediTermSshExecutor {
 
     // Set to true to enable debug output
-    private static final boolean DEBUG = false;
+    private static final boolean DEBUG = true;
 
     // Terminal dimensions - like setting your monitor resolution
     private static final int TERMINAL_WIDTH = 200;
     private static final int TERMINAL_HEIGHT = 24;
 
     // Patterns for detecting prompts and pagination
-    private static final Pattern PROMPT_PATTERN = Pattern.compile("[\\w\\-\\.@]+[#>$%]\\s*$");
+    // Matches various device prompts:
+    // - Cisco user mode: Switch>, Router>
+    // - Cisco privileged: Switch#, Router#
+    // - Cisco config: Switch(config)#, Switch(config-if)#
+    // - Linux: user@host$, root@host#
+    // - With stack/port: Switch:1>, Switch:2#
+    // - Bare prompts: >, #, $
+    private static final Pattern PROMPT_PATTERN = Pattern.compile("[\\w\\-\\.@:]*(?:\\([\\w\\-]+\\))?[#>$%]\\s*$");
     private static final Pattern MORE_PATTERN = Pattern.compile("(?i)(--\\s*more\\s*--|<---\\s*more\\s*--->|More:.*<space>.*Quit:.*q)");
     private static final Pattern LOGIN_PROMPT = Pattern.compile("(?i)(user\\s*name|username|login|user)\\s*:\\s*$");
     private static final Pattern PASSWORD_PROMPT = Pattern.compile("(?i)password\\s*:\\s*$");
@@ -80,7 +87,8 @@ public class JediTermSshExecutor {
             // Create the terminal processor that runs in background
             JediTermProcessor processor = new JediTermProcessor(inputStream, terminal, textBuffer);
 
-            try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
                 executor.submit(processor);
 
                 // === Step 5: Handle login sequence ===
@@ -93,7 +101,7 @@ public class JediTermSshExecutor {
                 // === Step 7: Execute the command ===
                 // Clear the buffer before sending command so we only capture command output
                 processor.clearRawBuffer();
-                
+
                 sendLine(outputStream, command);
 
                 // Wait for command completion, handling "more" prompts
@@ -114,8 +122,10 @@ public class JediTermSshExecutor {
 
                 exitCode = channel.getExitStatus();
 
-                // Shutdown the processor
+            } finally {
+                // ALWAYS stop the processor and shutdown executor
                 processor.stop();
+                executor.shutdownNow(); // Interrupt any blocked reads
             }
 
         } catch (Exception e) {
