@@ -299,7 +299,7 @@ public class SSHExecutor implements Callable<Session> {
         for (int i = 0; i < maxAttempts; i++) {
             Result result = expect.withTimeout(5000L, TimeUnit.MILLISECONDS).expect(
                     anyOf(
-                            regexp("(?i)(username|login|user)\\s*:\\s*$"),      // Username prompt
+                            regexp("(?i)(user\\s*name|username|login|user)\\s*:\\s*$"),      // Username prompt
                             regexp("(?i)password\\s*:\\s*$"),                    // Password prompt
                             regexp("(?i)(authentication failed|access denied|login incorrect)"), // Failure
                             regexp("[\\w\\-\\.@]+[#>$%]\\s*$")                  // Device prompt
