@@ -29,7 +29,7 @@ import java.util.regex.Pattern;
 public class JediTermSshExecutor {
 
     // Set to true to enable debug output
-    private static final boolean DEBUG = false;
+    private static final boolean DEBUG = true;
 
     // Terminal dimensions - like setting your monitor resolution
     private static final int TERMINAL_WIDTH = 200;
@@ -56,59 +56,98 @@ public class JediTermSshExecutor {
         ChannelShell channel = null;
         String outputString = "";
         int exitCode = -1;
+        String host = session.getHost();
+
+        debug("═══════════════════════════════════════════════════════════════");
+        debug("STARTING executeCommand for host: " + host);
+        debug("Command: '" + command + "'");
+        debug("isAdmin: " + isAdmin);
+        debug("═══════════════════════════════════════════════════════════════");
 
         try {
             // === Step 1: Set up the SSH channel ===
+            debug("[STEP 1] Opening shell channel...");
             channel = (ChannelShell) session.openChannel("shell");
 
             if (isAdmin) {
                 channel.setPtyType("vt100", TERMINAL_WIDTH, TERMINAL_HEIGHT, 640, 480);
+                debug("[STEP 1] PTY type: vt100 (admin mode)");
             } else {
                 channel.setPtyType("dumb", TERMINAL_WIDTH, TERMINAL_HEIGHT, 640, 480);
+                debug("[STEP 1] PTY type: dumb (non-admin mode)");
             }
             channel.setPty(true);
 
             // === Step 2: Get I/O streams BEFORE connect() ===
-            // IMPORTANT: JSch requires getInputStream() to be called before connect()
+            debug("[STEP 2] Getting I/O streams...");
             InputStream inputStream = channel.getInputStream();
             OutputStream outputStream = channel.getOutputStream();
 
             // === Step 3: Now connect ===
+            debug("[STEP 3] Connecting channel (timeout: 15s)...");
             channel.connect(15000);
+            debug("[STEP 3] Channel connected successfully");
 
             // === Step 4: Create JediTerm components ===
-            // This is like setting up your virtual monitor's internals
+            debug("[STEP 4] Creating JediTerm components...");
             StyleState styleState = new StyleState();
             TerminalTextBuffer textBuffer = new TerminalTextBuffer(TERMINAL_WIDTH, TERMINAL_HEIGHT, styleState);
             BackBufferDisplay display = new BackBufferDisplay(textBuffer);
             JediTerminal terminal = new JediTerminal(display, textBuffer, styleState);
 
             // === Step 5: Set up JediTerm processor ===
-            // Create the terminal processor that runs in background
+            debug("[STEP 5] Starting JediTerm processor...");
             JediTermProcessor processor = new JediTermProcessor(inputStream, terminal, textBuffer);
 
             ExecutorService executor = Executors.newSingleThreadExecutor();
             try {
                 executor.submit(processor);
+                debug("[STEP 5] Processor started");
 
-                // === Step 5: Handle login sequence ===
+
+                // === Step 6: Handle login sequence ===
+                debug("[STEP 6] Handling login sequence...");
                 handleLogin(processor, outputStream, session.getUserName(), password);
+                debug("[STEP 6] Login complete");
 
-                // === Step 6: Detect the prompt ===
+                // === Step 7: Detect the prompt ===
+                debug("[STEP 7] Detecting prompt...");
                 String detectedPrompt = detectPrompt(processor, outputStream);
-                debug("Detected prompt: '" + detectedPrompt + "'");
+                debug("[STEP 7] Detected prompt: '" + detectedPrompt + "' (length=" + detectedPrompt.length() + ")");
 
-                // === Step 7: Execute the command ===
-                // Clear the buffer before sending command so we only capture command output
+                // === Step 8: Execute the command ===
+                debug("[STEP 8] Preparing to execute command...");
+                debug("[STEP 8] Clearing raw buffer...");
                 processor.clearRawBuffer();
 
+                debug("[STEP 8] Waiting 300ms for buffer stabilization...");
+                sleep(300);
+
+                debug("[STEP 8] Sending command: '" + command + "'");
                 sendLine(outputStream, command);
 
-                // Wait for command completion, handling "more" prompts
-                outputString = waitForCommandCompletion(processor, outputStream, detectedPrompt);
+                debug("[STEP 8] Waiting 500ms for device to process...");
+                sleep(700);
 
-                // Clean up the output
+                // === Step 9: Wait for command completion ===
+                debug("[STEP 9] Waiting for command completion...");
+                outputString = waitForCommandCompletion(processor, outputStream, detectedPrompt);
+                debug("[STEP 9] Raw output received, length: " + outputString.length());
+
+                // === Step 10: Clean up the output ===
+                debug("[STEP 10] Cleaning output...");
+                debug("[STEP 10] RAW OUTPUT BEFORE CLEAN:");
+                debug("─────────────────────────────────────");
+                debug(outputString);
+                debug("─────────────────────────────────────");
+
                 outputString = cleanOutput(outputString, command, detectedPrompt);
+
+                debug("[STEP 10] CLEANED OUTPUT:");
+                debug("─────────────────────────────────────");
+                debug(outputString);
+                debug("─────────────────────────────────────");
+                debug("[STEP 10] Cleaned output length: " + outputString.length());
 
                 if (DEBUG) {
                     System.out.println("=== Command Output ===");
@@ -116,27 +155,34 @@ public class JediTermSshExecutor {
                     System.out.println("======================");
                 }
 
-                // Send exit command
+                // === Step 11: Send exit command ===
+                debug("[STEP 11] Sending exit command...");
                 sendLine(outputStream, "exit");
                 Thread.sleep(500);
 
                 exitCode = channel.getExitStatus();
+                debug("[STEP 11] Exit code: " + exitCode);
 
             } finally {
-                // ALWAYS stop the processor and shutdown executor
+                debug("Cleaning up: stopping processor and executor...");
                 processor.stop();
-                executor.shutdownNow(); // Interrupt any blocked reads
+                executor.shutdownNow();
             }
 
         } catch (Exception e) {
+            debug("ERROR: " + e.getClass().getSimpleName() + " - " + e.getMessage());
             e.printStackTrace();
-            outputString = "Error: " + e.getMessage();
             return new CommandResult(false, exitCode, outputString);
         } finally {
             if (channel != null) {
+                debug("Disconnecting channel...");
                 channel.disconnect();
             }
         }
+
+        debug("═══════════════════════════════════════════════════════════════");
+        debug("COMPLETED executeCommand - Output length: " + outputString.length());
+        debug("═══════════════════════════════════════════════════════════════");
 
         return new CommandResult(true, exitCode, outputString);
     }
@@ -225,66 +271,121 @@ public class JediTermSshExecutor {
 
     /**
      * Waits for command to complete, handling pagination ("more" prompts).
-     * 
-     * Strategy: Use the raw buffer which accumulates ALL data received.
-     * Wait until output stabilizes (no new data) AND we see the prompt again.
+     *
+     * Strategy: Weighted Signals approach.
+     *
+     * Combines multiple signals with different weights to determine completion.
+     * This is more robust than relying on a single signal because:
+     * - Multiple signals can compensate for each other
+     * - Handles edge cases where one signal might fail
+     * - Adapts to different device behaviors
+     *
+     * Signals and weights:
+     * - Time elapsed > minimum       : +1 point
+     * - Has content (rawLength > 0)  : +1 point
+     * - Raw data stable > 1.5s       : +2 points
+     * - Screen stable (3+ checks)    : +2 points
+     * - Raw data stable > 3s         : +1 point (bonus for long stability)
+     *
+     * Exit when score >= 5 (out of max 7)
      */
     private String waitForCommandCompletion(JediTermProcessor processor, OutputStream output, String expectedPrompt) throws IOException {
-        String escapedPrompt = Pattern.quote(expectedPrompt);
-        // Match prompt at end of content (with possible trailing whitespace/newlines)
-        Pattern promptPattern = Pattern.compile(escapedPrompt + "\\s*$");
+        // Timing configuration
+        long timeout = 60000;            // 60 second total timeout
+        long minimumWaitTime = 1500;     // Minimum time before considering complete
+        long rawStableThreshold = 1500;  // Raw data stable threshold for +2 points
+        long rawStableBonusThreshold = 3000; // Bonus point if stable this long
+        long checkInterval = 400;        // Check every 400ms
 
-        long timeout = 60000; // 60 second total timeout
-        long stabilityTimeout = 3000; // Consider stable if no new data for 3 seconds
+        // Score configuration
+        int requiredScore = 5;           // Need this score to exit
+        int screenStableChecksNeeded = 3; // Screen stable checks for +2 points
+
         long startTime = System.currentTimeMillis();
-        long lastChangeTime = System.currentTimeMillis();
-        
-        String lastRawContent = "";
+        long lastDataChangeTime = System.currentTimeMillis();
+
+        String lastScreenContent = "";
+        int stableScreenCount = 0;
         int lastRawLength = 0;
 
-        debug("Waiting for command completion, looking for prompt: '" + expectedPrompt + "'");
+        debug("Waiting for command completion (weighted-signals), requiredScore=" + requiredScore);
 
         while (System.currentTimeMillis() - startTime < timeout) {
             String rawContent = processor.getRawContent();
             String screenContent = processor.getScreenContent();
-            
-            // Check if we received new data
+            long elapsed = System.currentTimeMillis() - startTime;
+            long timeSinceLastData = System.currentTimeMillis() - lastDataChangeTime;
+
+            // Track raw data changes
             if (rawContent.length() != lastRawLength) {
-                lastChangeTime = System.currentTimeMillis();
+                lastDataChangeTime = System.currentTimeMillis();
+                timeSinceLastData = 0;
                 lastRawLength = rawContent.length();
-                lastRawContent = rawContent;
-                
-                debug("Data received, total raw length: " + lastRawLength);
+                debug("Raw data received, length: " + lastRawLength);
             }
 
-            // Check for "more" prompt - need to send space to continue
+            // Check for "more" prompt - need to send space to continue pagination
             if (MORE_PATTERN.matcher(screenContent).find() || MORE_PATTERN.matcher(rawContent).find()) {
                 debug("Found 'more' prompt, sending space");
                 output.write(' ');
                 output.flush();
+                stableScreenCount = 0;
                 sleep(300);
                 continue;
             }
 
-            // Check if output has stabilized AND we see the prompt
-            long timeSinceLastChange = System.currentTimeMillis() - lastChangeTime;
-            
-            // Look for the prompt in the last part of the content
-            String lastPart = rawContent.length() > 500 ? rawContent.substring(rawContent.length() - 500) : rawContent;
-            boolean hasPrompt = promptPattern.matcher(lastPart).find() || lastPart.contains(expectedPrompt);
-            
-            if (hasPrompt && timeSinceLastChange > 1000) {
-                debug("Found prompt and output stabilized, command complete");
+            // Track screen stability
+            if (screenContent.equals(lastScreenContent)) {
+                stableScreenCount++;
+            } else {
+                stableScreenCount = 0;
+                lastScreenContent = screenContent;
+            }
+
+            // Calculate weighted score
+            int score = 0;
+            StringBuilder scoreDebug = new StringBuilder();
+
+            // Signal 1: Minimum time elapsed (+1)
+            if (elapsed >= minimumWaitTime) {
+                score += 1;
+                scoreDebug.append("time(+1) ");
+            }
+
+            // Signal 2: Has content (+1)
+            if (lastRawLength > 0) {
+                score += 1;
+                scoreDebug.append("content(+1) ");
+            }
+
+            // Signal 3: Raw data stable > threshold (+2)
+            if (timeSinceLastData >= rawStableThreshold) {
+                score += 2;
+                scoreDebug.append("rawStable(+2) ");
+            }
+
+            // Signal 4: Screen stable for N checks (+2)
+            if (stableScreenCount >= screenStableChecksNeeded) {
+                score += 2;
+                scoreDebug.append("screenStable(+2) ");
+            }
+
+            // Signal 5: Raw data stable for longer period - bonus (+1)
+            if (timeSinceLastData >= rawStableBonusThreshold) {
+                score += 1;
+                scoreDebug.append("rawStableBonus(+1) ");
+            }
+
+            debug("Score: " + score + "/" + requiredScore + " [" + scoreDebug.toString().trim() + "] " +
+                    "elapsed=" + elapsed + "ms, rawStable=" + timeSinceLastData + "ms, screenChecks=" + stableScreenCount);
+
+            // Check if we have enough confidence to exit
+            if (score >= requiredScore) {
+                debug("Command complete: score=" + score + " >= " + requiredScore);
                 break;
             }
 
-            // If output has been stable for a while, assume command is done
-            if (timeSinceLastChange > stabilityTimeout && lastRawLength > 0) {
-                debug("Output stabilized for " + stabilityTimeout + "ms, assuming complete");
-                break;
-            }
-
-            sleep(200);
+            sleep(checkInterval);
         }
 
         // Return the accumulated raw content
@@ -317,36 +418,70 @@ public class JediTermSshExecutor {
     /**
      * Cleans the output by removing the echoed command and trailing prompt.
      */
-    private String cleanOutput(String output, String command, String prompt) {
-        String[] lines = output.split("\\r?\\n");
-        StringBuilder cleaned = new StringBuilder();
+    private  String cleanOutput(String output, String command, String prompt) {
+        debug("[cleanOutput] Starting cleanup...");
+        debug("[cleanOutput] Input length: " + output.length());
+        debug("[cleanOutput] Command to remove: '" + command + "'");
+        debug("[cleanOutput] Prompt to remove: '" + prompt + "'");
 
-        for (String line : lines) {
+        String[] lines = output.split("\\r?\\n");
+        debug("[cleanOutput] Total lines: " + lines.length);
+
+        StringBuilder cleaned = new StringBuilder();
+        boolean foundCommandLine = false;
+        int skippedCount = 0;
+        int addedCount = 0;
+
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
             String trimmed = line.trim();
 
             // Skip empty lines at start
-            if (cleaned.length() == 0 && trimmed.isEmpty()) {
+            if (cleaned.isEmpty() && trimmed.isEmpty()) {
+                debug("[cleanOutput] Line " + i + ": SKIP (empty at start)");
+                skippedCount++;
                 continue;
             }
 
-            // Skip the echoed command
-            if (trimmed.equals(command) || trimmed.endsWith(command)) {
+            // Skip the echoed command (first occurrence only)
+            if (!foundCommandLine && (trimmed.equals(command) || trimmed.endsWith(command))) {
+                debug("[cleanOutput] Line " + i + ": SKIP (command echo): '" + trimmed + "'");
+                foundCommandLine = true;
+                skippedCount++;
                 continue;
             }
 
-            // Skip lines that are just the prompt
+            // Skip lines that are ONLY the prompt (not lines containing prompt + content)
             if (trimmed.equals(prompt)) {
+                debug("[cleanOutput] Line " + i + ": SKIP (prompt only): '" + trimmed + "'");
+                skippedCount++;
+                continue;
+            }
+
+            // Skip lines that are prompt + command (like "> show version")
+            if (trimmed.startsWith(prompt) && trimmed.substring(prompt.length()).trim().equals(command)) {
+                debug("[cleanOutput] Line " + i + ": SKIP (prompt+command): '" + trimmed + "'");
+                skippedCount++;
                 continue;
             }
 
             // Remove trailing whitespace padding from JediTerm
             String cleanedLine = line.replaceAll("\\s+$", "");
             if (!cleanedLine.isEmpty()) {
+                debug("[cleanOutput] Line " + i + ": ADD: '" + (cleanedLine.length() > 80 ? cleanedLine.substring(0, 80) + "..." : cleanedLine) + "'");
                 cleaned.append(cleanedLine).append("\n");
+                addedCount++;
+            } else {
+                debug("[cleanOutput] Line " + i + ": SKIP (empty after trim)");
+                skippedCount++;
             }
         }
 
-        return cleaned.toString().trim();
+        String result = cleaned.toString().trim();
+        debug("[cleanOutput] Cleanup complete - Added: " + addedCount + ", Skipped: " + skippedCount);
+        debug("[cleanOutput] Final output length: " + result.length());
+
+        return result;
     }
 
     // ==================== JEDITERM PROCESSOR ====================
