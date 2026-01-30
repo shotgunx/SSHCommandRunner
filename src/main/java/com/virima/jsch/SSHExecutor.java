@@ -13,8 +13,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.Callable;
-import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
 
 
 public class SSHExecutor implements Callable<Session> {
@@ -25,14 +23,6 @@ public class SSHExecutor implements Callable<Session> {
     String privateKey;
     String passphrase;
     int port;
-
-    // Regex pattern to match common shell prompts:
-    // - username@host:path$ (Linux)
-    // - username@host:path# (root)
-    // - [user@host ~]$ (CentOS/RHEL)
-    // - hostname> or hostname# (network devices)
-    // - PS C:\> (PowerShell)
-    static final String PROMPT_REGEX = ".*[#>$%]\\s*$";
 
     public SSHExecutor(String var1, String var2, String var3, String var4, String var5, int var6) {
         this.host = var1;
@@ -237,63 +227,7 @@ public class SSHExecutor implements Callable<Session> {
         }
     }
 
-    /**
-     * Cleans the command output captured by ExpectIt.
-     * Removes command echo and any trailing whitespace.
-     */
-    private static String cleanExpectOutput(String output, String command, String prompt) {
-        if (output == null || output.isEmpty()) {
-            return "";
-        }
-        
-        String[] lines = output.split("\\r?\\n");
-        StringBuilder cleaned = new StringBuilder();
-        boolean foundCommand = false;
-        
-        for (String line : lines) {
-            // Skip the echoed command line
-            if (!foundCommand && line.contains(command)) {
-                foundCommand = true;
-                continue;
-            }
-            
-            // Skip empty lines at the beginning
-            if (!foundCommand && line.trim().isEmpty()) {
-                continue;
-            }
-            
-            // Skip if line matches the prompt
-            if (prompt != null && line.trim().equals(prompt.trim())) {
-                continue;
-            }
-            
-            if (foundCommand) {
-                if (cleaned.length() > 0) {
-                    cleaned.append("\n");
-                }
-                cleaned.append(line);
-            }
-        }
-        
-        return cleaned.toString().trim();
-    }
 
-
-    private static String cleanOutput(String output) {
-        if (output == null) return "";
-
-        // Remove command echo (first line)
-        int firstNewline = output.indexOf('\n');
-        if (firstNewline > 0) {
-            output = output.substring(firstNewline + 1);
-        }
-
-        // Clean whitespace
-        output = output.replaceAll("\\r", "");
-        output = output.replaceAll("\\n{3,}", "\n\n");
-
-        return output.trim();
-    }
     public Session call() throws Exception {
         Session var1 = getSshSession2(this.host, this.userName, this.password, this.privateKey, this.passphrase, this.port);
         return var1;
