@@ -99,8 +99,7 @@ public class JediTermSshExecutor {
             debug("[STEP 5] Starting JediTerm processor...");
             JediTermProcessor processor = new JediTermProcessor(inputStream, terminal, textBuffer);
 
-            ExecutorService executor = Executors.newSingleThreadExecutor();
-            try {
+            try(ExecutorService executor = Executors.newSingleThreadExecutor()){
                 executor.submit(processor);
                 debug("[STEP 5] Processor started");
 
@@ -119,6 +118,7 @@ public class JediTermSshExecutor {
                 debug("[STEP 8] Preparing to execute command...");
                 debug("[STEP 8] Clearing raw buffer...");
                 processor.clearRawBuffer();
+                processor.cleartextBuffer();
 
                 debug("[STEP 8] Waiting 300ms for buffer stabilization...");
                 sleep(300);
@@ -166,7 +166,6 @@ public class JediTermSshExecutor {
             } finally {
                 debug("Cleaning up: stopping processor and executor...");
                 processor.stop();
-                executor.shutdownNow();
             }
 
         } catch (Exception e) {
@@ -325,12 +324,21 @@ public class JediTermSshExecutor {
             }
 
             // Check for "more" prompt - need to send space to continue pagination
-            if (MORE_PATTERN.matcher(screenContent).find() || MORE_PATTERN.matcher(rawContent).find()) {
+            // IMPORTANT: Only check screenContent, NOT rawContent!
+            // rawContent accumulates ALL data and never forgets old "-- MORE --" prompts,
+            // which would cause infinite matching. screenContent shows current display only.
+            Matcher screenMoreMatcher = MORE_PATTERN.matcher(screenContent);
+            if (screenMoreMatcher.find()) {
+                debug("MORE matched in SCREEN content: '" + screenMoreMatcher.group() + "'");
+                // Show context around the match
+                int start = Math.max(0, screenMoreMatcher.start() - 30);
+                int end = Math.min(screenContent.length(), screenMoreMatcher.end() + 30);
+                debug("MORE context in screen: '..." + screenContent.substring(start, end).replace("\n", "\\n").replace("\r", "\\r") + "...'");
                 debug("Found 'more' prompt, sending space");
                 output.write(' ');
                 output.flush();
                 stableScreenCount = 0;
-                sleep(300);
+                sleep(500);  // Wait longer to let the screen update
                 continue;
             }
 
@@ -389,7 +397,7 @@ public class JediTermSshExecutor {
         }
 
         // Return the accumulated raw content
-        String result = processor.getRawContent();
+        String result = processor.getScreenContent();
         debug("Final raw content length: " + result.length());
         return result;
     }
@@ -580,6 +588,16 @@ public class JediTermSshExecutor {
         public void clearRawBuffer() {
             synchronized (lock) {
                 rawBuffer.setLength(0);
+            }
+        }
+
+        /**
+         * Clears the raw buffer. Call this before sending a command
+         * to ensure only command output is captured.
+         */
+        public void cleartextBuffer() {
+            synchronized (lock) {
+                textBuffer.clearScreenBuffer();
             }
         }
 
