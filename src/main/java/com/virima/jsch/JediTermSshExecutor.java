@@ -99,8 +99,7 @@ public class JediTermSshExecutor {
             debug("[STEP 5] Starting JediTerm processor...");
             JediTermProcessor processor = new JediTermProcessor(inputStream, terminal, textBuffer);
 
-            ExecutorService executor = Executors.newSingleThreadExecutor();
-            try {
+            try(ExecutorService executor = Executors.newSingleThreadExecutor()){
                 executor.submit(processor);
                 debug("[STEP 5] Processor started");
 
@@ -167,7 +166,6 @@ public class JediTermSshExecutor {
             } finally {
                 debug("Cleaning up: stopping processor and executor...");
                 processor.stop();
-                executor.shutdownNow();
             }
 
         } catch (Exception e) {
